@@ -1,0 +1,8 @@
+data-and-shapefiles/*
+
+
+precision-analysis/output/*
+precision-analysis/manuscript/*
+
+survey-design/figures/*
+*.Rhistory

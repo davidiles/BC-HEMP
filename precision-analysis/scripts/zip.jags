@@ -1,0 +1,42 @@
+
+
+    model {
+
+      p ~ dunif(0,1)      # (1-p) is zero inflation probability
+      sigma ~ dunif(0,2)  # spatial SD
+      tau = pow(sigma,-2)
+      
+      for (hab in 1:nhab){
+        exp_alpha[hab] ~ dunif(0,2)   
+        alpha[hab] = log(exp_alpha[hab])
+        expected[hab] = exp(alpha[hab] + 0.5*sigma*sigma)*p    # Expected count | exp_alpha, sigma, p
+      }
+      
+      for (i in 1:nobs){
+      
+        # 'Occupancy' status at each ARU
+        z[i] ~ dbern(p)
+        
+        # density | occupancy
+        log_mu[i] ~ dnorm(alpha[HABITAT[i]] + log(OFFSET[i]),tau)
+        
+        # Data
+        y[i] ~ dpois(exp(log_mu[i])*z[i])
+        
+        # Posterior predictive check
+        sim_z[i] ~ dbern(p)
+        sim_log_mu[i] ~ dnorm(alpha[HABITAT[i]] + log(OFFSET[i]),tau)
+        sim_y[i] ~ dpois(exp(sim_log_mu[i])*sim_z[i])
+        
+        # Squared error
+        sq_err_obs[i] = pow(y[i] - exp(log_mu[i])*p,2)
+        sq_err_pred[i] = pow(sim_y[i] - exp(sim_log_mu[i])*p,2)
+        
+      }
+      
+      # Derived quantities (for calculating 'Bayesian p-value')
+      RMSE_obs = sqrt(sum(sq_err_obs[])/nobs)
+      RMSE_pred = sqrt(sum(sq_err_pred[])/nobs)
+      
+    }
+
