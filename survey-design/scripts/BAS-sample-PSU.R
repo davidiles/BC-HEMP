@@ -1,65 +1,224 @@
-## devtools::install_github("paul-vdb/DFO-master-sample")
-library(BASMasterSample)
-library(sf)
-library(sp)
-library(data.table)
-library(spsurvey)
-library(dplyr)
-library(ggplot2)
-library(sampling)
-library(units)
-library(ggspatial)
-library(RColorBrewer)
-library(viridis)
-library(tidyverse)
-library(cowplot)
+# ***************************************************************
+# ***************************************************************
+# Script to select a random sample of locations for target PSUs
+# ***************************************************************
+# ***************************************************************
+
 rm(list=ls())
 
-setwd("~/iles_ECCC/Landbirds/BC-landbirds/HEMP-survey-design/iles")
+# ----------------------------------------------------------
+# Directory containing survey design files
+# ----------------------------------------------------------
+
+setwd("~/1_Work/BC-HEMP/")
+
+# ----------------------------------------------------------
+# Load libraries
+# ----------------------------------------------------------
+
+# Data manipulation
+library(tidyverse)
+library(sf)
+library(sp)
+library(ggspatial)
+
+# Plotting
+library(viridis)
+library(RColorBrewer)
+library(units)
+
+# Survey site selection
+## devtools::install_github("paul-vdb/DFO-master-sample")
+library(BASMasterSample)
+
+# Custom function to select a sample using BAS
+source("survey-design/scripts/0_functions.R")
+
+# ----------------------------------------------------------
+# Prepare plotting options
+# ----------------------------------------------------------
 
 theme_set(theme_bw())
 options(ggplot2.continuous.colour = "viridis")
 colscale = scale_fill_manual(values = brewer.pal(3,"Set2"))
 
+# ----------------------------------------------------------
+# Prepare spatial data
+# ----------------------------------------------------------
 
-# ********************************************************************
-# ********************************************************************
-# PART 1: PREPARE DATA
-# ********************************************************************
-# ********************************************************************
+# Location of shapefiles within survey design directory
+setwd("data-and-shapefiles/shapefiles/")
 
-# --------------------------------------------
-# Read in shapefiles
-# --------------------------------------------
+# Load spatial objects
+studyRegion = read_sf("StudyArea_Habitat.shp")     # Entire BC study area
+all_psu = read_sf("PSUs_Habitat_update_updated.shp")              # Habitat strata within PSUs (alpine, subalpine, upper montane)
+all_psu_contour = read_sf("PSUs_500_contours.shp") # 50 m contours within PSUs
+wetlands = read_sf("Wetland_Buffers_100_PSUs.shp") # Wetlands
+disturbed = read_sf("Disturbed_Habitat_Final.shp") # Disturbed habitat
 
-## Study Area
-studyRegion <- read_sf("StudyArea_Habitat.shp")
-
-# Habitat strata within PSUs (alpine, subalpine, upper montane)
-all_psu <- read_sf("PSUs_Habitat.shp")
-
-# 50 m contours within PSUs
-all_psu_contour <- read_sf("PSUs_500_contours.shp")
-
-wetlands <- read_sf("Wetland_Buffers_100_PSUs.shp")
-disturbed <- read_sf("Disturbed_Habitat_Final.shp")
+setwd("../../")
 
 # --------------------------------------------
-# Combine geometries within each PSU
+# Prepare master sample for entire study region
 # --------------------------------------------
 
-all_psu <- all_psu %>%
+set.seed(999)
+bb_MS = buildMS(shp = studyRegion) 
+save(bb_MS, file = "survey-design/output/bb_MS.RData")
+
+# --------------------------------------------
+# Combine habitat geometries within each PSU
+# --------------------------------------------
+
+all_psu = all_psu %>%
   group_by(habitat, PSU_ID) %>%
   summarise(Shape_Area_m = sum(as.numeric(st_area(geometry))), 
             geometry = st_union(geometry)) %>%
-  ungroup()
+  ungroup() %>% 
+  arrange(PSU_ID,habitat) %>%
+  mutate(PSU_habitat = paste0(PSU_ID," - ",habitat))
 
-all_psu = all_psu %>%
-  arrange(PSU_ID,habitat)
+# Elevation contours within all PSUs
+all_psu_contour = all_psu_contour %>%
+  mutate(elevation = as.numeric(low_cont)) %>%
+  st_intersection(all_psu)
+
+# --------------------------------------------
+# Sample design settings
+# --------------------------------------------
+
+# Assume each ARU surveys a circular area with radius 300 m
+aru_area = pi*300^2 
+
+# Set maximum sample size within each habitat stratum, within each PSU
+all_psu$max_n = ( all_psu$Shape_Area_m / aru_area ) %>% ceiling()
+
+# Limit n to 20, when max_n is greater than 20
+all_psu$n = all_psu$max_n
+all_psu$n[all_psu$n>20] = 20
+
+# Examine anticipated total sample size across study region
+sample_size_total = all_psu %>%
+  as.data.frame() %>%
+  group_by(habitat) %>%
+  summarize(n = sum(n))
+
+# Expected total sample size across all PSUs in study area
+print(sample_size_total) 
+
+# *******************************************************************
+# *******************************************************************
+# Example: plot a PSU and select a sample within it using BAS
+# *******************************************************************
+# *******************************************************************
+
+psu_id = 122
+
+# Shapefile for PSU of interest
+psu = all_psu[all_psu$PSU_ID == psu_id,]
+
+# Elevation contours within PSU
+psu_contour = subset(all_psu_contour,PSU_ID == psu_id)
+
+# Plot the PSU 
+psu_plot = ggplot(psu)+
+  geom_sf(aes(fill = habitat))+
+  annotation_scale() + colscale + ggtitle(paste0("PSU_ID = ",psu_id))+
+  geom_sf(data = psu_contour, aes(col = elevation),fill = "transparent")
+print(psu_plot)
+
+# Select a stratified spatially balanced sample using BAS
+n = psu$n
+names(n) = psu$PSU_habitat
+psu_samp = masterSample(psu, N = n, bb = bb_MS, stratum = "PSU_habitat")
+
+# Add habitat information
+psu_samp <- st_intersection(psu_samp,all_psu) %>% dplyr::select(-PSU_habitat.1)
+
+# Plot the sample locations
+psu_plot + geom_sf(data = psu_samp, aes(shape = habitat))
+
+# *******************************************************************
+# *******************************************************************
+# Example: plot all PSUs and select a sample within them using BAS
+# *******************************************************************
+# *******************************************************************
+
+# Plot the PSUs 
+all_psu_plot = ggplot(all_psu)+
+  geom_sf(aes(fill = habitat))+
+  annotation_scale() + colscale + ggtitle("All PSUs")+
+  geom_sf(data = all_psu_contour, aes(col = elevation),fill = "transparent")
+print(all_psu_plot)
+
+# Select a stratified spatially balanced sample using BAS
+n = all_psu$n
+names(n) = all_psu$PSU_habitat
+all_psu_samp = masterSample(all_psu, N = n, bb = bb_MS, stratum = "PSU_habitat")
+
+# Add habitat information
+all_psu_samp <- st_intersection(all_psu_samp,all_psu) %>% dplyr::select(-PSU_habitat.1)
+
+
+# Plot the sample locations
+all_psu_plot + geom_sf(data = all_psu_samp, aes(shape = habitat))
+
+# *******************************************************************
+# *******************************************************************
+# Compare draw with a single PSU, or all PSUs (should be identical)
+# *******************************************************************
+# *******************************************************************
+
+tmp <- st_intersection(all_psu_samp, psu)
+
+psu_plot + geom_sf(data = psu_samp, aes(shape = habitat))
+psu_plot + geom_sf(data = tmp, aes(shape = habitat))
+
+# *******************************************************************
+# *******************************************************************
+# Example of carving off a portion of the PSU
+# *******************************************************************
+# *******************************************************************
+
+# Only include the lower half of the study area 
+point_coords <- st_coordinates(psu_samp)
+psu_samp <- cbind(psu_samp,point_coords)
+
+# Create a bounding box to crop the PSU
+poly_crop  <- subset(psu_samp,Y < mean(psu_samp$Y)) %>%
+  st_bbox() %>%
+  st_as_sfc()
+
+# Subset the psu polygon
+psu_crop <- st_intersection(psu,poly_crop) %>%
+  group_by(habitat,PSU_ID) %>%
+  summarise(Shape_Area_m = sum(as.numeric(st_area(geometry))), 
+            geometry = st_union(geometry)) %>%
+  ungroup() %>% 
+  arrange(PSU_ID,habitat) %>%
+  mutate(PSU_habitat = paste0(PSU_ID," - ",habitat),
+         n = ceiling(Shape_Area_m / aru_area ))
+
+# Define revised sample size target for this portion of the PSU
+n = psu_crop$n
+names(n) = psu_crop$PSU_habitat
+psu_crop_samp = masterSample(psu_crop, N = n, bb = bb_MS, stratum = "PSU_habitat")
+
+# Add habitat information
+psu_crop_samp <- st_intersection(psu_crop_samp,all_psu) %>% dplyr::select(-PSU_habitat.1)
+
+# Plot the PSU (filled black circles are "revised" sample locations, dark gray empty circles are sample locations in full PSU) 
+psu_crop_plot = ggplot(psu_crop)+
+  geom_sf(data = psu, fill = "gray95", col = "transparent")+
+  geom_sf(aes(fill = habitat), col = "transparent")+
+  annotation_scale() + colscale + ggtitle("Cropped section of PSU")+
+  geom_sf(data = psu_crop_samp, shape = 19)+
+  geom_sf(data = psu_samp, shape = 1, col = "gray35", size = 3)
+psu_crop_plot
 
 # ********************************************************************
 # ********************************************************************
-# PART 2: EVALUATE SAMPLE DESIGN ACROSS REPEATED SAMPLE DRAWS
+# EVALUATE SAMPLE DESIGN ACROSS REPEATED SAMPLE DRAWS
 # ********************************************************************
 # ********************************************************************
 
@@ -99,8 +258,8 @@ for (psu_id in unique(all_psu$PSU_ID)){
   # Select (over)sample using BAS
   bas_samp = NULL
   while(is.null(bas_samp)){
-    bb_psu <- buildMS(shp = psu)
-    bas_samp <- tryCatch(
+    bb_psu = buildMS(shp = psu)
+    bas_samp = tryCatch(
       {masterSample(psu, N = n_stratum, bb = bb_psu, stratum = "habitat")},
       error = function(cond){NULL}
     )
