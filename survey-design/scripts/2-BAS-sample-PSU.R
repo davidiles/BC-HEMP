@@ -140,6 +140,12 @@ n_waterbodies_per_PSU = stillwater_in_PSUs %>%
   group_by(PSU_ID) %>%
   summarize(n_waterbodies = n())
 
+# Calculate perimeter length of each polygon
+stillwater_perimeter = stillwater_in_PSUs %>%
+  st_cast("MULTILINESTRING") %>%
+  group_by("PSU_ID","Lake_ID") %>%
+  mutate(Perimeter_m = st_length(.))
+
 # Set target wetland sample size in each PSU
 stillwater_PSU_summary$n_area = ( stillwater_PSU_summary$Shape_Area_m / aru_area ) %>% round() # Maximum sample size based on overall area of wetlands
 stillwater_PSU_summary <- full_join(stillwater_PSU_summary, n_waterbodies_per_PSU) # Maximum sample size based on number of discrete waterbodies
