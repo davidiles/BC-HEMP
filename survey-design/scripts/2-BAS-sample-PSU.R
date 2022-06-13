@@ -249,7 +249,7 @@ all_psu_plot + geom_sf(data = all_psu_samp, aes(shape = habitat))
 
 tmp <- st_intersection(all_psu_samp, psu)
 
-psu_plot + geom_sf(data = psu_samp, aes(shape = habitat))
+psu_plot + geom_sf(data = habitat_samp, aes(shape = habitat))
 psu_plot + geom_sf(data = tmp, aes(shape = habitat))
 
 # *******************************************************************
@@ -257,13 +257,14 @@ psu_plot + geom_sf(data = tmp, aes(shape = habitat))
 # Example of carving off a portion of the PSU
 # *******************************************************************
 # *******************************************************************
+aru_area = pi*300^2
 
 # Only include the lower half of the study area 
-point_coords <- st_coordinates(psu_samp)
-psu_samp <- cbind(psu_samp,point_coords)
+point_coords <- st_coordinates(habitat_samp)
+habitat_samp <- cbind(habitat_samp,point_coords)
 
 # Create a bounding box to crop the PSU
-poly_crop  <- subset(psu_samp,Y < mean(psu_samp$Y)) %>%
+poly_crop  <- subset(habitat_samp,Y < mean(habitat_samp$Y)) %>%
   st_bbox() %>%
   st_as_sfc()
 
@@ -272,10 +273,9 @@ psu_crop <- st_intersection(psu,poly_crop) %>%
   group_by(habitat,PSU_ID) %>%
   summarise(Shape_Area_m = sum(as.numeric(st_area(geometry))), 
             geometry = st_union(geometry)) %>%
-  ungroup() %>% 
-  arrange(PSU_ID,habitat) %>%
   mutate(PSU_habitat = paste0(PSU_ID," - ",habitat),
          n = ceiling(Shape_Area_m / aru_area ))
+psu_crop$n[psu_crop$n>20] = 20
 
 # Define revised sample size target for this portion of the PSU
 n = psu_crop$n
@@ -290,9 +290,16 @@ psu_crop_plot = ggplot(psu_crop)+
   geom_sf(data = psu, fill = "gray95", col = "transparent")+
   geom_sf(aes(fill = habitat), col = "transparent")+
   annotation_scale() + colscale + ggtitle("Cropped section of PSU")+
+  
+  # Carved off portion
   geom_sf(data = psu_crop_samp, shape = 19)+
-  geom_sf(data = psu_samp, shape = 1, col = "gray35", size = 3)
+  
+  # Original sample
+  geom_sf(data = habitat_samp, shape = 1, col = "gray35", size = 3)
+
 psu_crop_plot
+
+# This illustrates the master sample concept at work
 
 # # ********************************************************************
 # # ********************************************************************
